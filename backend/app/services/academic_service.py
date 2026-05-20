@@ -70,8 +70,14 @@ def create_class(db: Session, org_id: int, data: ClassCreate) -> Class:
     return klass
 
 
-def list_classes(db: Session, org_id: int, limit: int, offset: int) -> list[Class]:
-    return ClassRepository(db, org_id).list(limit=limit, offset=offset)
+def list_classes(
+    db: Session, org_id: int, limit: int, offset: int,
+    *, teacher_id: int | None = None,
+) -> list[Class]:
+    q = db.query(Class).filter(Class.organization_id == org_id)
+    if teacher_id is not None:
+        q = q.filter(Class.teacher_id == teacher_id)
+    return q.order_by(Class.id.desc()).limit(limit).offset(offset).all()
 
 
 def get_class(db: Session, org_id: int, class_id: int) -> Class:

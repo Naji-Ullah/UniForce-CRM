@@ -9,6 +9,7 @@ from app.models.identity import User
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationOut,
+    OrganizationSignup,
     OrganizationStats,
     OrganizationUpdate,
 )
@@ -21,6 +22,20 @@ HeadAdmin = Depends(require_roles(RoleName.HEAD_ADMIN))
 @router.post("", response_model=OrganizationOut, status_code=201)
 def create_org(body: OrganizationCreate, db: Session = Depends(get_db), _: User = HeadAdmin):
     return svc.create(db, body)
+
+
+@router.post("/public", response_model=OrganizationOut, status_code=201)
+def public_signup(body: OrganizationSignup, db: Session = Depends(get_db)):
+    data = OrganizationCreate(
+        name=body.name,
+        slug=body.slug,
+        domain=body.domain,
+        plan="standard",
+        manager_email=body.manager_email,
+        manager_name=body.manager_name,
+        manager_password=body.manager_password,
+    )
+    return svc.create(db, data)
 
 
 @router.get("", response_model=list[OrganizationOut])

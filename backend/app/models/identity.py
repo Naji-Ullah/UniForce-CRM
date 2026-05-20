@@ -83,6 +83,9 @@ class User(Base, TimestampMixin):
     teacher_profile: Mapped["Teacher"] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
+    student_profile: Mapped["Student"] = relationship(
+        back_populates="user", uselist=False
+    )
 
 
 class Manager(Base, TenantMixin, TimestampMixin):
@@ -116,11 +119,14 @@ class Teacher(Base, TenantMixin, TimestampMixin):
         ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     employee_code: Mapped[str] = mapped_column(String(40), nullable=False)
-    department: Mapped[str | None] = mapped_column(String(120))
+    department_id: Mapped[int | None] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"), index=True
+    )
     phone: Mapped[str | None] = mapped_column(String(40))
     hire_date: Mapped[date | None] = mapped_column(Date)
 
     user: Mapped["User"] = relationship(back_populates="teacher_profile")
+    department: Mapped["Department | None"] = relationship(back_populates="teachers")
 
     classes: Mapped[list["Class"]] = relationship(back_populates="teacher")
 
@@ -137,6 +143,11 @@ class Student(Base, TenantMixin, TimestampMixin):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Optional login: when set, the student can sign in via this user account.
+    # Nullable so legacy/imported students without a login still work.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), unique=True, index=True
+    )
     enrollment_number: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     email: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -150,6 +161,7 @@ class Student(Base, TenantMixin, TimestampMixin):
     )
 
     organization: Mapped["Organization"] = relationship(back_populates="students")
+    user: Mapped["User | None"] = relationship(back_populates="student_profile")
     enrollments: Mapped[list["Enrollment"]] = relationship(
         back_populates="student", cascade="all, delete-orphan"
     )

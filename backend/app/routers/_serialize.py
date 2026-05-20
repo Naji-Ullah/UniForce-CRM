@@ -8,6 +8,7 @@ from app.models.identity import Teacher
 def teacher_out(t: Teacher) -> dict:
     return {
         **{c.name: getattr(t, c.name) for c in t.__table__.columns},
+        "department_name": t.department.name if t.department else None,
         "email": t.user.email,
         "full_name": t.user.full_name,
         "is_active": t.user.is_active,

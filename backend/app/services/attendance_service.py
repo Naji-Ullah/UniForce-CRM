@@ -10,6 +10,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
+from app.models.academic import Enrollment
 from app.models.assessment import Attendance
 from app.models.enums import AttendanceStatus
 from app.models.identity import Student
@@ -101,3 +102,87 @@ def class_summary(db: Session, org_id: int, class_id: int) -> list[AttendanceSum
             )
         )
     return out
+
+
+def list_marked_dates(db: Session, org_id: int, class_id: int) -> list[dict]:
+    """Per-date roll-up so the calendar can flag which days already have marks."""
+    if not ClassRepository(db, org_id).get(class_id):
+        raise NotFoundError("Class not found in this organization")
+
+    S = AttendanceStatus
+
+    def cnt(status: AttendanceStatus):
+        return func.sum(case((Attendance.status == status.value, 1), else_=0))
+
+    rows = (
+        db.query(
+            Attendance.session_date,
+            func.count(Attendance.id).label("total"),
+            cnt(S.PRESENT).label("present"),
+            cnt(S.ABSENT).label("absent"),
+            cnt(S.LATE).label("late"),
+            cnt(S.EXCUSED).label("excused"),
+        )
+        .filter(
+            Attendance.organization_id == org_id,
+            Attendance.class_id == class_id,
+        )
+        .group_by(Attendance.session_date)
+        .order_by(Attendance.session_date.desc())
+        .all()
+    )
+    return [
+        {
+            "session_date": r.session_date.isoformat(),
+            "total": r.total or 0,
+            "present": r.present or 0,
+            "absent": r.absent or 0,
+            "late": r.late or 0,
+            "excused": r.excused or 0,
+        }
+        for r in rows
+    ]
+
+
+def session_roster(
+    db: Session, org_id: int, class_id: int, session_date: date
+) -> list[dict]:
+    """Roster for a class with each student's status on `session_date`.
+
+    Students with no record yet are returned with `status = None` so the
+    teacher can mark them. This makes the marking page the single source of
+    truth — the teacher never has to think about whether a row already exists.
+    """
+    if not ClassRepository(db, org_id).get(class_id):
+        raise NotFoundError("Class not found in this organization")
+
+    roster = (
+        db.query(Student)
+        .join(Enrollment, Enrollment.student_id == Student.id)
+        .filter(
+            Enrollment.organization_id == org_id,
+            Enrollment.class_id == class_id,
+        )
+        .order_by(Student.full_name)
+        .all()
+    )
+
+    existing = {
+        a.student_id: a
+        for a in db.query(Attendance).filter(
+            Attendance.organization_id == org_id,
+            Attendance.class_id == class_id,
+            Attendance.session_date == session_date,
+        )
+    }
+
+    return [
+        {
+            "student_id": s.id,
+            "student_name": s.full_name,
+            "enrollment_number": s.enrollment_number,
+            "status": existing[s.id].status if s.id in existing else None,
+            "remarks": existing[s.id].remarks if s.id in existing else None,
+        }
+        for s in roster
+    ]

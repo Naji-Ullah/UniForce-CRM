@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
+from app.models.academic import Class
 from app.models.assessment import Quiz, QuizMark
 from app.repositories.repos import ClassRepository, QuizRepository
 from app.schemas.assessment import QuizCreate, QuizMarkBulkCreate
@@ -17,8 +18,15 @@ def create_quiz(db: Session, org_id: int, data: QuizCreate) -> Quiz:
     return q
 
 
-def list_quizzes(db: Session, org_id: int, limit: int, offset: int) -> list[Quiz]:
-    return QuizRepository(db, org_id).list(limit=limit, offset=offset)
+def list_quizzes(
+    db: Session, org_id: int, limit: int, offset: int,
+    *, teacher_id: int | None = None,
+) -> list[Quiz]:
+    q = db.query(Quiz).filter(Quiz.organization_id == org_id)
+    if teacher_id is not None:
+        # Limit to quizzes whose class is taught by this teacher.
+        q = q.join(Class, Class.id == Quiz.class_id).filter(Class.teacher_id == teacher_id)
+    return q.order_by(Quiz.id.desc()).limit(limit).offset(offset).all()
 
 
 def record_marks(db: Session, org_id: int, data: QuizMarkBulkCreate) -> int:

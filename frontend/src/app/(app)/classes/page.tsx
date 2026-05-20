@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Badge } from "@/components/ui/primitives";
 import { DataTable } from "@/components/data-table";
@@ -22,6 +23,8 @@ interface Klass {
 }
 
 export default function ClassesPage() {
+  const { user } = useAuth();
+  const canEdit = user?.role === "MANAGER" || user?.role === "HEAD_ADMIN";
   const [rows, setRows] = useState<Klass[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
@@ -83,7 +86,8 @@ export default function ClassesPage() {
         title="Classes"
         subtitle="Term offerings of a course, taught by one teacher."
         action={
-          <Button onClick={() => setOpen(true)}>
+          <Button onClick={() => setOpen(true)} disabled={!canEdit}
+            title={canEdit ? "" : "Only managers can add classes"}>
             <Plus className="h-4 w-4" /> New class
           </Button>
         }

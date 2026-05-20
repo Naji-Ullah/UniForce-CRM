@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/primitives";
 import { DataTable } from "@/components/data-table";
@@ -19,6 +20,8 @@ interface Course {
 const BLANK = { code: "", title: "", description: "", credit_hours: 3 };
 
 export default function CoursesPage() {
+  const { user } = useAuth();
+  const canEdit = user?.role === "MANAGER" || user?.role === "HEAD_ADMIN";
   const [rows, setRows] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -60,7 +63,8 @@ export default function CoursesPage() {
         title="Courses"
         subtitle="Catalogue courses. Offerings live under Classes."
         action={
-          <Button onClick={() => setOpen(true)}>
+          <Button onClick={() => setOpen(true)} disabled={!canEdit}
+            title={canEdit ? "" : "Only managers can add courses"}>
             <Plus className="h-4 w-4" /> Add course
           </Button>
         }

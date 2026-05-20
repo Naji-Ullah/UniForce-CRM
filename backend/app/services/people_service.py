@@ -27,10 +27,16 @@ def _teacher_role_id(db: Session) -> int:
 def teacher_to_out(t: Teacher) -> dict:
     return {
         **{c.name: getattr(t, c.name) for c in t.__table__.columns},
+        "department_name": t.department.name if t.department else None,
         "email": t.user.email,
         "full_name": t.user.full_name,
         "is_active": t.user.is_active,
     }
+
+
+def _student_role_id(db: Session) -> int:
+    role = db.query(Role).filter(Role.name == RoleName.STUDENT.value).one()
+    return role.id
 
 
 # --- Teachers -------------------------------------------------------------
@@ -58,7 +64,7 @@ def create_teacher(db: Session, org_id: int, data: TeacherCreate) -> Teacher:
             user_id=user.id,
             organization_id=org_id,
             employee_code=data.employee_code,
-            department=data.department,
+            department_id=data.department_id,
             phone=data.phone,
             hire_date=data.hire_date,
         )
@@ -115,9 +121,32 @@ def create_student(db: Session, org_id: int, data: StudentCreate) -> Student:
     )
     if dup:
         raise ConflictError("Enrollment number already exists in this organization")
-    student = Student(organization_id=org_id, **data.model_dump())
-    db.add(student)
-    db.commit()
+
+    payload = data.model_dump()
+    password = payload.pop("password", None)
+
+    try:
+        user_id: int | None = None
+        if password:
+            if UserRepository(db, None).by_email(payload["email"]):
+                raise ConflictError("Email already in use")
+            user = User(
+                organization_id=org_id,
+                role_id=_student_role_id(db),
+                email=payload["email"].lower(),
+                full_name=payload["full_name"],
+                hashed_password=hash_password(password),
+            )
+            db.add(user)
+            db.flush()
+            user_id = user.id
+
+        student = Student(organization_id=org_id, user_id=user_id, **payload)
+        db.add(student)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(student)
     return student
 

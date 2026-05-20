@@ -13,7 +13,17 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.errors import AppError
-from app.routers import academic, assessment, auth, dashboard, organizations, reports, students, teachers
+from app.routers import (
+    academic,
+    assessment,
+    auth,
+    dashboard,
+    departments,
+    organizations,
+    reports,
+    students,
+    teachers,
+)
 from app.seed import ensure_bootstrap
 
 
@@ -57,6 +67,7 @@ api = settings.API_V1_PREFIX
 for r in (
     auth.router,
     organizations.router,
+    departments.router,
     teachers.router,
     students.router,
     academic.courses,

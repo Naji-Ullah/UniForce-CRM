@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Badge } from "@/components/ui/primitives";
 import { DataTable } from "@/components/data-table";
@@ -13,8 +14,15 @@ interface Teacher {
   full_name: string;
   email: string;
   employee_code: string;
-  department: string | null;
+  department_id: number | null;
+  department_name: string | null;
   is_active: boolean;
+}
+
+interface Department {
+  id: number;
+  code: string;
+  name: string;
 }
 
 const BLANK = {
@@ -22,11 +30,15 @@ const BLANK = {
   email: "",
   password: "",
   employee_code: "",
-  department: "",
+  department_id: "",
 };
 
 export default function TeachersPage() {
+  const { user } = useAuth();
+  // Only the org's own Manager creates teachers — platform admins observe.
+  const canEdit = user?.role === "MANAGER";
   const [rows, setRows] = useState<Teacher[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(BLANK);
@@ -35,7 +47,12 @@ export default function TeachersPage() {
   async function load() {
     setLoading(true);
     try {
-      setRows(await api.get<Teacher[]>("/teachers"));
+      const [t, d] = await Promise.all([
+        api.get<Teacher[]>("/teachers"),
+        api.get<Department[]>("/departments"),
+      ]);
+      setRows(t);
+      setDepartments(d);
     } finally {
       setLoading(false);
     }
@@ -48,7 +65,10 @@ export default function TeachersPage() {
     e.preventDefault();
     setError("");
     try {
-      await api.post("/teachers", { ...form, department: form.department || null });
+      await api.post("/teachers", {
+        ...form,
+        department_id: form.department_id ? Number(form.department_id) : null,
+      });
       setOpen(false);
       setForm(BLANK);
       load();
@@ -63,7 +83,8 @@ export default function TeachersPage() {
         title="Teachers"
         subtitle="Faculty accounts in your organization."
         action={
-          <Button onClick={() => setOpen(true)}>
+          <Button onClick={() => setOpen(true)} disabled={!canEdit}
+            title={canEdit ? "" : "Only managers can add teachers"}>
             <Plus className="h-4 w-4" /> Add teacher
           </Button>
         }
@@ -71,12 +92,12 @@ export default function TeachersPage() {
       <DataTable<Teacher>
         loading={loading}
         rows={rows}
-        searchKeys={["full_name", "email", "employee_code", "department"]}
+        searchKeys={["full_name", "email", "employee_code", "department_name"]}
         columns={[
           { key: "full_name", header: "Name", render: (r) => <span className="font-medium">{r.full_name}</span> },
           { key: "email", header: "Email" },
           { key: "employee_code", header: "Employee #" },
-          { key: "department", header: "Department" },
+          { key: "department_name", header: "Department", render: (r) => r.department_name ?? "—" },
           {
             key: "is_active",
             header: "Status",
@@ -90,27 +111,41 @@ export default function TeachersPage() {
       />
       <SlideOver open={open} onClose={() => setOpen(false)} title="Add teacher">
         <form onSubmit={create} className="space-y-4">
-          {[
-            { k: "full_name", label: "Full name", t: "text" },
-            { k: "email", label: "Email", t: "email" },
-            { k: "password", label: "Temp password", t: "password" },
-            { k: "employee_code", label: "Employee code", t: "text" },
-            { k: "department", label: "Department", t: "text" },
-          ].map((f) => (
-            <div key={f.k} className="space-y-1.5">
-              <Label>{f.label}</Label>
-              <Input
-                type={f.t}
-                required={f.k !== "department"}
-                value={(form as any)[f.k]}
-                onChange={(e) => setForm({ ...form, [f.k]: e.target.value })}
-              />
-            </div>
-          ))}
+          <div className="space-y-1.5">
+            <Label>Full name</Label>
+            <Input required value={form.full_name}
+              onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Email</Label>
+            <Input type="email" required value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Temp password</Label>
+            <Input type="password" required minLength={8} value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Employee code</Label>
+            <Input required value={form.employee_code}
+              onChange={(e) => setForm({ ...form, employee_code: e.target.value })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Department</Label>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+              value={form.department_id}
+              onChange={(e) => setForm({ ...form, department_id: e.target.value })}
+            >
+              <option value="">— none —</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{d.code} · {d.name}</option>
+              ))}
+            </select>
+          </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
-          <Button type="submit" className="w-full">
-            Create teacher
-          </Button>
+          <Button type="submit" className="w-full">Create teacher</Button>
         </form>
       </SlideOver>
     </>

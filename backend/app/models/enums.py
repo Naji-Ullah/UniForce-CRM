@@ -11,6 +11,7 @@ class RoleName(str, enum.Enum):
     HEAD_ADMIN = "HEAD_ADMIN"
     MANAGER = "MANAGER"
     TEACHER = "TEACHER"
+    STUDENT = "STUDENT"
 
 
 class EnrollmentStatus(str, enum.Enum):

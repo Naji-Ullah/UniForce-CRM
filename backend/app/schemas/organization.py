@@ -13,6 +13,14 @@ class OrganizationCreate(BaseModel):
     manager_name: str | None = None
     manager_password: str | None = Field(default=None, min_length=8)
 
+class OrganizationSignup(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    slug: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9-]+$")
+    domain: str | None = None
+    manager_email: EmailStr
+    manager_name: str = Field(min_length=2, max_length=160)
+    manager_password: str = Field(min_length=8)
+
 
 class OrganizationUpdate(BaseModel):
     name: str | None = None

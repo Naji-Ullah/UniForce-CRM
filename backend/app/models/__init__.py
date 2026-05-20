@@ -1,7 +1,7 @@
 """Importing every model here ensures `Base.metadata` is fully populated
 before Alembic autogenerate or `create_all` runs.
 """
-from app.models.academic import Class, Course, Enrollment
+from app.models.academic import Class, Course, Department, Enrollment
 from app.models.assessment import (
     Assignment,
     AssignmentMark,
@@ -21,6 +21,7 @@ __all__ = [
     "Manager",
     "Teacher",
     "Student",
+    "Department",
     "Course",
     "Class",
     "Enrollment",

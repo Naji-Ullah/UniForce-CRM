@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -8,8 +9,8 @@ import { Card, Input, Label } from "@/components/ui/primitives";
 
 const DEMO = [
   { label: "Head Admin", email: "admin@shizuka.io", pw: "Admin@12345" },
-  { label: "Manager", email: "manager@northfield.edu", pw: "Manager@123" },
-  { label: "Teacher", email: "teacher@northfield.edu", pw: "Teacher@123" },
+  { label: "CUI Manager", email: "manager@cuilahore.edu.pk", pw: "Password1234!" },
+  { label: "CUI Student", email: "fa26bcs001@cuilahore.edu.pk", pw: "Password1234!" },
 ];
 
 export default function LoginPage() {
@@ -86,21 +87,12 @@ export default function LoginPage() {
         </Card>
 
         <div className="mt-6 space-y-2">
-          <p className="text-center text-xs text-muted-foreground">Demo accounts</p>
-          <div className="grid grid-cols-3 gap-2">
-            {DEMO.map((d) => (
-              <button
-                key={d.email}
-                onClick={() => {
-                  setEmail(d.email);
-                  setPassword(d.pw);
-                }}
-                className="rounded-md border border-border px-2 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted"
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
+          <p className="text-center text-xs text-muted-foreground">
+            New here?{" "}
+            <Link href="/register" className="text-foreground underline">
+              Create an organization
+            </Link>
+          </p>
         </div>
       </motion.div>
     </div>

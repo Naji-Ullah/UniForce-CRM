@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Badge } from "@/components/ui/primitives";
 import { DataTable } from "@/components/data-table";
@@ -28,6 +29,9 @@ const BLANK = {
 };
 
 export default function StudentsPage() {
+  const { user } = useAuth();
+  // Only the org's own Manager admits students — platform admins observe.
+  const canEdit = user?.role === "MANAGER";
   const [rows, setRows] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -69,7 +73,8 @@ export default function StudentsPage() {
         title="Students"
         subtitle="Learner records scoped to your organization."
         action={
-          <Button onClick={() => setOpen(true)}>
+          <Button onClick={() => setOpen(true)} disabled={!canEdit}
+            title={canEdit ? "" : "Only managers can add students"}>
             <Plus className="h-4 w-4" /> Add student
           </Button>
         }

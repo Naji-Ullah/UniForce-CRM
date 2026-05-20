@@ -24,6 +24,23 @@ from app.models.enums import EnrollmentStatus
 from app.models.mixins import TenantMixin, TimestampMixin
 
 
+class Department(Base, TenantMixin, TimestampMixin):
+    """Academic department within an organization (e.g. Computer Science)."""
+
+    __tablename__ = "departments"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "code", name="uq_department_org_code"),
+        UniqueConstraint("organization_id", "name", name="uq_department_org_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+
+    teachers: Mapped[list["Teacher"]] = relationship(back_populates="department")
+
+
 class Course(Base, TenantMixin, TimestampMixin):
     """A catalogue course (e.g. CS-101 Intro to Programming)."""
 

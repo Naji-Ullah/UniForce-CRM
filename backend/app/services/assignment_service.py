@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, NotFoundError
+from app.models.academic import Class
 from app.models.assessment import Assignment, AssignmentMark, AssignmentSubmission
 from app.models.enums import SubmissionStatus
 from app.repositories.repos import (
@@ -25,8 +26,16 @@ def create_assignment(db: Session, org_id: int, data: AssignmentCreate) -> Assig
     return a
 
 
-def list_assignments(db: Session, org_id: int, limit: int, offset: int) -> list[Assignment]:
-    return AssignmentRepository(db, org_id).list(limit=limit, offset=offset)
+def list_assignments(
+    db: Session, org_id: int, limit: int, offset: int,
+    *, teacher_id: int | None = None,
+) -> list[Assignment]:
+    q = db.query(Assignment).filter(Assignment.organization_id == org_id)
+    if teacher_id is not None:
+        q = q.join(Class, Class.id == Assignment.class_id).filter(
+            Class.teacher_id == teacher_id
+        )
+    return q.order_by(Assignment.id.desc()).limit(limit).offset(offset).all()
 
 
 def submit(db: Session, org_id: int, data: SubmissionCreate) -> AssignmentSubmission:
