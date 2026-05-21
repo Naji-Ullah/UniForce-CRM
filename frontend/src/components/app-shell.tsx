@@ -91,10 +91,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="flex h-16 items-center gap-2 px-5">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold">
-            S
+            CF
           </div>
           {!collapsed && (
-            <span className="truncate text-sm font-semibold">Shizuka CRM</span>
+            <span className="truncate text-sm font-semibold">CampusFlow</span>
           )}
         </div>
 

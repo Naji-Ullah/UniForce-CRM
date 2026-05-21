@@ -3,7 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 
 export const metadata: Metadata = {
-  title: "Shizuka University CRM",
+  title: "CampusFlow CRM",
   description: "Multi-tenant SaaS University CRM",
 };
 

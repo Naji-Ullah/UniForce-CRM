@@ -45,7 +45,7 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground">
             S
           </div>
-          <h1 className="text-xl font-semibold tracking-tight">Shizuka University CRM</h1>
+          <h1 className="text-xl font-semibold tracking-tight">CampusFlow CRM</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Sign in to your organization workspace
           </p>

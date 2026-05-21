@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -37,12 +37,15 @@ export default function TeachersPage() {
   const { user } = useAuth();
   // Only the org's own Manager creates teachers — platform admins observe.
   const canEdit = user?.role === "MANAGER";
+  // Platform admins (HEAD_ADMIN) can also remove records from any tenant.
+  const canDelete = user?.role === "MANAGER" || user?.role === "HEAD_ADMIN";
   const [rows, setRows] = useState<Teacher[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(BLANK);
   const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   async function load() {
     setLoading(true);
@@ -60,6 +63,19 @@ export default function TeachersPage() {
   useEffect(() => {
     load();
   }, []);
+
+  async function remove(t: Teacher) {
+    if (!confirm(`Delete teacher "${t.full_name}" (${t.employee_code})? This also removes their login. This cannot be undone.`)) return;
+    setDeletingId(t.id);
+    try {
+      await api.del(`/teachers/${t.id}`);
+      setRows((rs) => rs.filter((r) => r.id !== t.id));
+    } catch (err: any) {
+      alert(err?.message || "Failed to delete teacher");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -107,6 +123,27 @@ export default function TeachersPage() {
               </Badge>
             ),
           },
+          ...(canDelete
+            ? [
+                {
+                  key: "actions",
+                  header: "",
+                  className: "w-12 text-right",
+                  render: (r: Teacher) => (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => remove(r)}
+                      disabled={deletingId === r.id}
+                      title="Delete teacher"
+                      aria-label={`Delete ${r.full_name}`}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
       <SlideOver open={open} onClose={() => setOpen(false)} title="Add teacher">

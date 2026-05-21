@@ -40,6 +40,41 @@ def my_marks(user: User = Depends(get_current_user), db: Session = Depends(get_d
     return me_svc.marks(db, user)
 
 
+# Course self-registration ------------------------------------------------
+# Students enroll themselves; service enforces the 21 credit-hour cap.
+@router.get("/me/available-classes", dependencies=[student_only])
+def my_available_classes(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return me_svc.available_classes(db, user)
+
+
+@router.get("/me/registration", dependencies=[student_only])
+def my_registration_summary(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return me_svc.registration_summary(db, user)
+
+
+@router.post("/me/register/{class_id}", status_code=201, dependencies=[student_only])
+def my_register(
+    class_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    me_svc.register_for_class(db, user, class_id)
+    return me_svc.registration_summary(db, user)
+
+
+@router.delete("/me/register/{class_id}", status_code=204, dependencies=[student_only])
+def my_drop(
+    class_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    me_svc.drop_class(db, user, class_id)
+
+
 # --- Staff-facing student CRUD --------------------------------------------
 @router.post("", response_model=StudentOut, status_code=201, dependencies=[admin])
 def create(body: StudentCreate, ctx: TenantContext = Ctx, db: Session = Depends(get_db)):

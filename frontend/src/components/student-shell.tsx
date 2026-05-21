@@ -3,13 +3,14 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, CalendarCheck, ClipboardList, LogOut } from "lucide-react";
+import { LayoutDashboard, CalendarCheck, ClipboardList, BookOpen, LogOut } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/student/dashboard", label: "Overview", icon: LayoutDashboard },
+  { href: "/student/courses", label: "Courses", icon: BookOpen },
   { href: "/student/attendance", label: "Attendance", icon: CalendarCheck },
   { href: "/student/marks", label: "Marks", icon: ClipboardList },
 ];
