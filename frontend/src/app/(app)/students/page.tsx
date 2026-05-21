@@ -26,6 +26,7 @@ const BLANK = {
   email: "",
   phone: "",
   admission_date: "",
+  password: "",
 };
 
 export default function StudentsPage() {
@@ -74,6 +75,7 @@ export default function StudentsPage() {
         ...form,
         phone: form.phone || null,
         admission_date: form.admission_date || null,
+        password: form.password || null,
       });
       setOpen(false);
       setForm(BLANK);
@@ -154,6 +156,19 @@ export default function StudentsPage() {
               />
             </div>
           ))}
+          <div className="space-y-1.5">
+            <Label>Login password (optional)</Label>
+            <Input
+              type="password"
+              minLength={8}
+              placeholder="Leave blank for no login (manager-only enrollment)"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              If set (min 8 chars), the student can sign in and self-register for classes.
+            </p>
+          </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <Button type="submit" className="w-full">
             Create student

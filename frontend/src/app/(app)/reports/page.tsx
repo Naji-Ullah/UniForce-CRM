@@ -21,11 +21,6 @@ interface Klass {
   term: string;
   teacher_name: string | null;
 }
-interface Department {
-  id: number;
-  code: string;
-  name: string;
-}
 interface Quiz {
   id: number;
   class_id: number;
@@ -45,11 +40,9 @@ const ALL = "ALL";
 
 export default function ReportsPage() {
   const [classes, setClasses] = useState<Klass[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
 
-  const [deptCode, setDeptCode] = useState<string>(ALL);
   const [classId, setClassId] = useState<string>("");
   const [quizId, setQuizId] = useState<string>(ALL);
   const [assignmentId, setAssignmentId] = useState<string>(ALL);
@@ -63,42 +56,24 @@ export default function ReportsPage() {
   useEffect(() => {
     Promise.all([
       api.get<Klass[]>("/classes"),
-      api.get<Department[]>("/departments").catch(() => [] as Department[]),
       api.get<Quiz[]>("/quizzes"),
       api.get<Assignment[]>("/assignments"),
     ])
-      .then(([cs, ds, qs, as_]) => {
+      .then(([cs, qs, as_]) => {
         setClasses(cs);
-        setDepartments(ds);
         setQuizzes(qs);
         setAssignments(as_);
       })
       .finally(() => setLoading(false));
   }, []);
 
-  // Map class -> department code by inferring from course code prefix (e.g. CSC-* -> CS).
-  // The backend exposes department on the teacher, not the class, so we use the
-  // course-code prefix as a lightweight client-side grouping.
-  const deptOfClass = useMemo(() => {
-    const m = new Map<number, string>();
-    for (const c of classes) {
-      const prefix = (c.course_code || "").split("-")[0] || "";
-      const dept =
-        departments.find((d) => d.code === prefix) ||
-        departments.find((d) => prefix.startsWith(d.code));
-      m.set(c.id, dept?.code || prefix || "");
-    }
-    return m;
-  }, [classes, departments]);
-
-  const visibleClasses = useMemo(() => {
-    const list = deptCode === ALL
-      ? classes
-      : classes.filter((c) => deptOfClass.get(c.id) === deptCode);
-    return [...list].sort((a, b) =>
-      (a.course_code || "").localeCompare(b.course_code || "")
-    );
-  }, [classes, deptCode, deptOfClass]);
+  const visibleClasses = useMemo(
+    () =>
+      [...classes].sort((a, b) =>
+        (a.course_code || "").localeCompare(b.course_code || "")
+      ),
+    [classes]
+  );
 
   // Keep the selected class valid as filters change.
   useEffect(() => {
@@ -172,22 +147,7 @@ export default function ReportsPage() {
       />
 
       <Card className="mb-6">
-        <CardContent className="grid gap-4 pt-6 md:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>Department</Label>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-              value={deptCode}
-              onChange={(e) => setDeptCode(e.target.value)}
-            >
-              <option value={ALL}>All departments</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.code}>
-                  {d.code} · {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        <CardContent className="pt-6">
           <div className="space-y-1.5">
             <Label>Class</Label>
             <select
@@ -197,7 +157,7 @@ export default function ReportsPage() {
               disabled={visibleClasses.length === 0}
             >
               {visibleClasses.length === 0 ? (
-                <option>— no classes in this department —</option>
+                <option>— no classes yet —</option>
               ) : (
                 visibleClasses.map((c) => (
                   <option key={c.id} value={c.id}>

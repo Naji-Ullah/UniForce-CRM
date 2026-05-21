@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Users, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,20 @@ interface Klass {
   schedule: string | null;
   enrolled_count: number;
   capacity: number;
+}
+
+interface Student {
+  id: number;
+  enrollment_number: string;
+  full_name: string;
+}
+
+interface Enrollment {
+  id: number;
+  student_id: number;
+  student_name: string | null;
+  enrollment_number: string | null;
+  status: string;
 }
 
 export default function ClassesPage() {
@@ -41,6 +55,15 @@ export default function ClassesPage() {
     capacity: 40,
   });
 
+  // Roster management state
+  const [rosterClass, setRosterClass] = useState<Klass | null>(null);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterPick, setRosterPick] = useState("");
+  const [rosterError, setRosterError] = useState("");
+  const [rosterBusy, setRosterBusy] = useState(false);
+
   async function load() {
     setLoading(true);
     try {
@@ -59,6 +82,79 @@ export default function ClassesPage() {
   useEffect(() => {
     load();
   }, []);
+
+  async function openRoster(k: Klass) {
+    setRosterClass(k);
+    setRosterError("");
+    setRosterPick("");
+    setRosterLoading(true);
+    try {
+      const [en, st] = await Promise.all([
+        api.get<Enrollment[]>(`/enrollments?class_id=${k.id}`),
+        api.get<Student[]>("/students"),
+      ]);
+      setEnrollments(en);
+      setStudents(st);
+    } finally {
+      setRosterLoading(false);
+    }
+  }
+
+  async function addEnrollment(e: React.FormEvent) {
+    e.preventDefault();
+    if (!rosterClass || !rosterPick) return;
+    setRosterError("");
+    setRosterBusy(true);
+    try {
+      const created = await api.post<Enrollment>("/enrollments", {
+        student_id: Number(rosterPick),
+        class_id: rosterClass.id,
+      });
+      // Backend may omit student_name on create payload — fill it from the picker so the
+      // newly-added row renders right away without another roundtrip.
+      const stu = students.find((s) => s.id === Number(rosterPick));
+      setEnrollments((es) => [
+        ...es,
+        {
+          ...created,
+          student_name: created.student_name ?? stu?.full_name ?? null,
+          enrollment_number: created.enrollment_number ?? stu?.enrollment_number ?? null,
+        },
+      ]);
+      setRosterPick("");
+      setRows((rs) =>
+        rs.map((r) =>
+          r.id === rosterClass.id ? { ...r, enrolled_count: r.enrolled_count + 1 } : r
+        )
+      );
+    } catch (err: any) {
+      setRosterError(err?.message || "Failed to enroll");
+    } finally {
+      setRosterBusy(false);
+    }
+  }
+
+  async function removeEnrollment(en: Enrollment) {
+    if (!rosterClass) return;
+    if (!confirm(`Remove ${en.student_name ?? "this student"} from the class?`)) return;
+    setRosterError("");
+    try {
+      await api.del(`/enrollments/${en.id}`);
+      setEnrollments((es) => es.filter((x) => x.id !== en.id));
+      setRows((rs) =>
+        rs.map((r) =>
+          r.id === rosterClass.id
+            ? { ...r, enrolled_count: Math.max(0, r.enrolled_count - 1) }
+            : r
+        )
+      );
+    } catch (err: any) {
+      setRosterError(err?.message || "Failed to remove");
+    }
+  }
+
+  const enrolledIds = new Set(enrollments.map((e) => e.student_id));
+  const availableStudents = students.filter((s) => !enrolledIds.has(s.id));
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -84,7 +180,7 @@ export default function ClassesPage() {
     <>
       <PageHeader
         title="Classes"
-        subtitle="Term offerings of a course, taught by one teacher."
+        subtitle="Assign a course to a teacher for a term. One class = one course × one teacher × one section."
         action={
           <Button onClick={() => setOpen(true)} disabled={!canEdit}
             title={canEdit ? "" : "Only managers can add classes"}>
@@ -120,6 +216,25 @@ export default function ClassesPage() {
               </Badge>
             ),
           },
+          ...(canEdit
+            ? [
+                {
+                  key: "roster",
+                  header: "",
+                  className: "w-32 text-right",
+                  render: (r: Klass) => (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openRoster(r)}
+                      title="Add or remove enrolled students"
+                    >
+                      <Users className="h-4 w-4" /> Roster
+                    </Button>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
       <SlideOver open={open} onClose={() => setOpen(false)} title="New class">
@@ -183,6 +298,105 @@ export default function ClassesPage() {
             Create class
           </Button>
         </form>
+      </SlideOver>
+
+      <SlideOver
+        open={!!rosterClass}
+        onClose={() => setRosterClass(null)}
+        title={
+          rosterClass
+            ? `Roster · ${rosterClass.course_code} · ${rosterClass.section}`
+            : "Roster"
+        }
+      >
+        {rosterClass && (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              {enrollments.length}/{rosterClass.capacity} enrolled · {rosterClass.term}
+            </p>
+
+            <form onSubmit={addEnrollment} className="space-y-2">
+              <Label>Add student</Label>
+              <div className="flex gap-2">
+                <select
+                  required
+                  className="flex h-9 flex-1 rounded-md border border-input bg-transparent px-3 text-sm"
+                  value={rosterPick}
+                  onChange={(e) => setRosterPick(e.target.value)}
+                  disabled={
+                    rosterLoading || availableStudents.length === 0 ||
+                    enrollments.length >= rosterClass.capacity
+                  }
+                >
+                  <option value="">
+                    {students.length === 0
+                      ? "— no students in this organization —"
+                      : availableStudents.length === 0
+                      ? "— all students already enrolled —"
+                      : "Select a student…"}
+                  </option>
+                  {availableStudents.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.enrollment_number} · {s.full_name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  type="submit"
+                  disabled={!rosterPick || rosterBusy ||
+                    enrollments.length >= rosterClass.capacity}
+                >
+                  <Plus className="h-4 w-4" /> Enroll
+                </Button>
+              </div>
+              {enrollments.length >= rosterClass.capacity && (
+                <p className="text-xs text-amber-600">
+                  Class is at capacity. Increase capacity or remove a student first.
+                </p>
+              )}
+            </form>
+
+            {rosterError && <p className="text-xs text-destructive">{rosterError}</p>}
+
+            <div>
+              <p className="mb-2 text-sm font-medium">Enrolled students</p>
+              {rosterLoading ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : enrollments.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No students enrolled yet.
+                </p>
+              ) : (
+                <ul className="max-h-[55vh] space-y-2 overflow-auto pr-1">
+                  {enrollments.map((en) => (
+                    <li
+                      key={en.id}
+                      className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">
+                          {en.student_name ?? `Student #${en.student_id}`}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {en.enrollment_number ?? "—"} · {en.status}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeEnrollment(en)}
+                        title="Remove from class"
+                        aria-label={`Remove ${en.student_name ?? "student"}`}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
       </SlideOver>
     </>
   );

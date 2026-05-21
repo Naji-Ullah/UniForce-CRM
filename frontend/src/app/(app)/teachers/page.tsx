@@ -14,15 +14,7 @@ interface Teacher {
   full_name: string;
   email: string;
   employee_code: string;
-  department_id: number | null;
-  department_name: string | null;
   is_active: boolean;
-}
-
-interface Department {
-  id: number;
-  code: string;
-  name: string;
 }
 
 const BLANK = {
@@ -30,7 +22,6 @@ const BLANK = {
   email: "",
   password: "",
   employee_code: "",
-  department_id: "",
 };
 
 export default function TeachersPage() {
@@ -40,7 +31,6 @@ export default function TeachersPage() {
   // Platform admins (HEAD_ADMIN) can also remove records from any tenant.
   const canDelete = user?.role === "MANAGER" || user?.role === "HEAD_ADMIN";
   const [rows, setRows] = useState<Teacher[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(BLANK);
@@ -50,12 +40,7 @@ export default function TeachersPage() {
   async function load() {
     setLoading(true);
     try {
-      const [t, d] = await Promise.all([
-        api.get<Teacher[]>("/teachers"),
-        api.get<Department[]>("/departments"),
-      ]);
-      setRows(t);
-      setDepartments(d);
+      setRows(await api.get<Teacher[]>("/teachers"));
     } finally {
       setLoading(false);
     }
@@ -81,10 +66,7 @@ export default function TeachersPage() {
     e.preventDefault();
     setError("");
     try {
-      await api.post("/teachers", {
-        ...form,
-        department_id: form.department_id ? Number(form.department_id) : null,
-      });
+      await api.post("/teachers", form);
       setOpen(false);
       setForm(BLANK);
       load();
@@ -108,12 +90,11 @@ export default function TeachersPage() {
       <DataTable<Teacher>
         loading={loading}
         rows={rows}
-        searchKeys={["full_name", "email", "employee_code", "department_name"]}
+        searchKeys={["full_name", "email", "employee_code"]}
         columns={[
           { key: "full_name", header: "Name", render: (r) => <span className="font-medium">{r.full_name}</span> },
           { key: "email", header: "Email" },
           { key: "employee_code", header: "Employee #" },
-          { key: "department_name", header: "Department", render: (r) => r.department_name ?? "—" },
           {
             key: "is_active",
             header: "Status",
@@ -167,19 +148,6 @@ export default function TeachersPage() {
             <Label>Employee code</Label>
             <Input required value={form.employee_code}
               onChange={(e) => setForm({ ...form, employee_code: e.target.value })} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Department</Label>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-              value={form.department_id}
-              onChange={(e) => setForm({ ...form, department_id: e.target.value })}
-            >
-              <option value="">— none —</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>{d.code} · {d.name}</option>
-              ))}
-            </select>
           </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <Button type="submit" className="w-full">Create teacher</Button>
