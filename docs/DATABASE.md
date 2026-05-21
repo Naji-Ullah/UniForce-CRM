@@ -1,185 +1,220 @@
-# Database Architecture
+# The Shizuka-CRM Database — Detailed Walkthrough
 
-This document is the heart of the project. It explains the schema, every
-relationship, the normalization decisions, the indexing strategy, and exactly
-how multi-tenant isolation is guaranteed.
+## The 30-second mental model
 
-> Stack: **PostgreSQL 16** · **SQLAlchemy 2.0** (declarative `Mapped[]`) ·
-> **Alembic** migrations. Models live in `backend/app/models/`.
+This is a **multi-tenant university CRM**. One Postgres database serves many universities. Every "tenant-scoped" row carries an `organization_id` so one university's data can never bleed into another's. Inside a tenant, the data flows from **Organization → People → Courses & Classes → Assessment → Reports**.
+
+There are **17 tables** total, all living in the default `public` schema.
+
+> Stack: **PostgreSQL 16** · **SQLAlchemy 2.0** (declarative `Mapped[]`) · **Alembic** migrations. Models live in `backend/app/models/`.
 
 ---
 
-## 1. ERD (text form)
+## 1. The tenant root
+
+### 🏛️ `organizations`
+The university itself. Everything else hangs off this.
+
+| Column | What it is |
+|---|---|
+| `id` | PK |
+| `slug` | URL-safe key (e.g. `cuilahore`). Globally unique. |
+| `name` | Full name (e.g. "CUI Lahore") |
+| `domain` | Optional email domain |
+| `plan` | Billing plan name (default `"standard"`) |
+| `is_active` | Suspend a whole tenant without deleting it |
+
+> **Cascade rule:** delete an organization → every row in every tenant table that references it disappears (Postgres `ON DELETE CASCADE`). One atomic "delete the whole university."
+
+---
+
+## 2. Identity & access — *who can log in*
+
+### 🔑 `roles` (lookup table — only 4 rows ever)
+A tiny dictionary so role metadata lives in one place. Values: `HEAD_ADMIN`, `MANAGER`, `TEACHER`, `STUDENT`.
+
+### 👤 `users`
+The login table. Every person who can sign in has a row here.
+
+- `email` — unique across the **entire platform** (auth happens before we know which tenant you belong to).
+- `organization_id` — which university you belong to. **Nullable on purpose:** the Head Admin owns no single tenant, so they get `NULL`.
+- `role_id` → `roles`. `ON DELETE RESTRICT` — you can't delete a role that's still in use.
+- `hashed_password`, `is_active`, `last_login_at` — usual auth metadata.
+
+### 🧑‍💼 `managers` (1-to-1 with `users`)
+A user who is a Manager gets one extra row here with their `title` and `phone`. `user_id` is `UNIQUE` — that's how Postgres enforces "one user, at most one manager profile."
+
+### 🧑‍🏫 `teachers` (1-to-1 with `users`)
+Faculty extension. Extra fields: `employee_code`, `department_id`, `phone`, `hire_date`.
+
+- `UNIQUE (organization_id, employee_code)` — employee codes are unique **within** a tenant. Two universities can both have an `FAC-CS-01`; that's fine.
+- `department_id` is `ON DELETE SET NULL` — deleting a department doesn't kill its teachers, just unlinks them.
+
+### 🧑‍🎓 `students` (optional 1-to-1 with `users`)
+The interesting one. `user_id` is **nullable** — a student can exist without a login (e.g. legacy imports). When set, that user is how the student signs in.
+
+- `UNIQUE (organization_id, enrollment_number)` — e.g. `FA26-BCS-001` is unique within CUI Lahore but could repeat at another uni.
+- `UNIQUE (organization_id, email)` — same logic for email.
+- `status` — `ACTIVE / INACTIVE / GRADUATED / SUSPENDED`.
+
+---
+
+## 3. Academic structure — *what is taught*
+
+### 🏢 `departments`
+"Computer Science", "Electrical Engineering", etc. — owned by an organization.
+
+- `UNIQUE (organization_id, code)` and `UNIQUE (organization_id, name)`.
+
+### 📚 `courses`
+The **course catalog**. A course is an abstract idea: "CSC-101 — Intro to Programming, 3 credit hours". It is *not* tied to a teacher or a semester.
+
+- `UNIQUE (organization_id, code)`.
+
+### 🎓 `classes`
+A **class is one offering of a course** — a specific section in a specific term, taught by a specific teacher.
+
+This split (course = catalog, class = offering) is the most important modeling decision in the schema. It means CSC-101 can run every semester with different teachers without duplicating the catalog row.
+
+- `course_id` → `courses` (`CASCADE`)
+- `teacher_id` → `teachers` (`RESTRICT` — you can't delete a teacher who's still teaching something)
+- `section`, `term`, `room`, `schedule`, `capacity`
+- `UNIQUE (organization_id, course_id, term, section)` — no two identical sections of the same course in the same term.
+
+### 🔗 `enrollments` (the M:N junction between students and classes)
+A student can take many classes; a class has many students. This table resolves that.
+
+- `UNIQUE (student_id, class_id)` — a student is either in a class or not, no duplicates.
+- Carries its own data: `status` (`ENROLLED / DROPPED / COMPLETED`), `final_grade`, `enrolled_at`. That makes it an **association object**, not a bare link table.
+
+---
+
+## 4. Assessment — *what is recorded*
+
+### ✅ `attendance`
+One row per **(class, student, session date)**. The hot query is "today's attendance sheet for this class" — there's a composite unique on those three columns.
+
+- `marked_by_teacher_id` is `SET NULL` (deleting a teacher doesn't destroy history).
+- `status`: `PRESENT / ABSENT / LATE / EXCUSED`.
+
+### 📝 `assignments` → `assignment_submissions` → `assignment_marks`
+A three-step pipeline:
+
+1. **`assignments`** — a teacher creates one ("Lab 3 — Recursion, due Friday, /100"). Belongs to a `class_id`.
+2. **`assignment_submissions`** — what the student turned in. `UNIQUE (assignment_id, student_id)` — one submission per student per assignment.
+3. **`assignment_marks`** — the grade. **1-to-1 with submission** (the `submission_id` FK is `UNIQUE`). Separating the mark from the submission cleanly splits "the act of turning in" from "the act of grading" — including who graded it and when.
+
+### 📊 `quizzes` → `quiz_marks`
+Simpler than assignments — no separate submission step.
+
+- `quizzes` belongs to a `class_id`, has `total_marks` (default 20) and `quiz_date`.
+- `quiz_marks` — `UNIQUE (quiz_id, student_id)`. Direct mark, no intermediate submission object.
+
+---
+
+## 5. Audit — *who downloaded what*
+
+### 📄 `reports`
+Every PDF a manager or teacher generates gets logged.
+
+- `report_type` (e.g. `attendance`, `gradebook`), `scope` (`class` | `student`), `reference_id` (the class or student id), `file_name`.
+- `params` is **JSONB** — stores the exact filter set used so a report is reproducible without needing extra columns.
+
+---
+
+## Visual map of everything
 
 ```
-                         ┌───────────────────┐
-                         │   organizations   │  ← TENANT ROOT
-                         │  id (PK)           │
-                         │  slug (UQ)         │
-                         └─────────┬─────────┘
-                                   │ 1
-        ┌──────────────────────────┼───────────────────────────────┐
-        │ N                        │ N                              │ N
- ┌──────┴──────┐           ┌───────┴────────┐               ┌───────┴───────┐
- │   users     │           │    students    │               │    courses    │
- │ id (PK)     │           │ id (PK)        │               │ id (PK)       │
- │ org_id (FK) │           │ org_id (FK)    │               │ org_id (FK)   │
- │ role_id(FK) │           │ enroll_no      │               │ code          │
- │ email (UQ)  │           └───────┬────────┘               └───────┬───────┘
- └──┬───┬──────┘                   │ M                              │ 1
-1:1 │   │ 1:1                      │                                │ N
- ┌──┴─┐ ┌┴─────┐            ┌──────┴────────┐               ┌───────┴───────┐
- │mgr │ │teacher│───────────│  enrollments  │───────────────│    classes    │
- │    │ │ id PK │ 1       N │ student_id FK │ N           1 │ id (PK)       │
- └────┘ └───┬───┘           │ class_id   FK │               │ course_id FK  │
-            │ 1   (teaches)  │ UQ(stu,cls)   │               │ teacher_id FK │
-            │ N              └───────────────┘               └───┬───┬───┬───┘
-            └──────────────────────────────────────────────────┘ │   │   │
-                                                              N   │ N │ N │
-                                ┌───────────────┬─────────────────┘   │   │
-                                │               │                     │   │
-                        ┌───────┴──────┐ ┌──────┴───────┐    ┌─────────┴─┐ │
-                        │  attendance  │ │  assignments │    │  quizzes  │ │
-                        │ UQ(cls,stu,  │ │  id (PK)     │    │  id (PK)  │ │
-                        │    date)     │ └──────┬───────┘    └─────┬─────┘ │
-                        └──────────────┘        │ 1                │ 1     │
-                                                │ N                │ N     │
-                                   ┌────────────┴─────────┐ ┌──────┴─────┐ │
-                                   │ assignment_submissions│ │ quiz_marks │ │
-                                   │  UQ(assignment,stu)   │ │ UQ(quiz,   │ │
-                                   └────────────┬──────────┘ │    stu)    │ │
-                                                │ 1:1        └────────────┘ │
-                                       ┌────────┴─────────┐                 │
-                                       │ assignment_marks │   ┌─────────────┴┐
-                                       │  submission_id UQ│   │   reports    │
-                                       └──────────────────┘   │ audit trail  │
-                                                               └──────────────┘
+                  ┌────────────────────┐
+                  │  organizations     │  (tenant root — everything below is org-scoped)
+                  └─────────┬──────────┘
+                            │ 1
+        ┌───────────────────┼───────────────────────────┐
+        │                   │                           │
+       ▼ N                  ▼ N                         ▼ N
+   ┌────────┐         ┌─────────────┐             ┌──────────┐
+   │ users  │         │ departments │             │ students │
+   └───┬────┘         └──────┬──────┘             └────┬─────┘
+       │ 1:1                 │ 1                       │
+   ┌───┴────┬────────┐       │ N                       │
+   ▼        ▼        ▼      ▼                          │
+managers teachers (student_  ┌──────────┐              │
+              user link)     │ courses  │              │
+                 │           └────┬─────┘              │
+                 │                │ 1                  │
+                 │                ▼ N                  │
+                 │           ┌──────────┐              │
+                 └──────────►│ classes  │◄─────────────┘
+                  N (teaches)└────┬─────┘  M:N via `enrollments`
+                                  │ 1
+              ┌───────────────────┼────────────────────┐
+              ▼ N                 ▼ N                  ▼ N
+       ┌──────────────┐   ┌─────────────┐      ┌────────────┐
+       │ attendance   │   │ assignments │      │  quizzes   │
+       └──────────────┘   └──────┬──────┘      └─────┬──────┘
+                                 │ 1                 │ 1
+                                 ▼ N                 ▼ N
+                       ┌──────────────────┐   ┌────────────┐
+                       │ assignment_      │   │ quiz_marks │
+                       │   submissions    │   └────────────┘
+                       └────────┬─────────┘
+                                │ 1:1
+                                ▼
+                     ┌─────────────────────┐
+                     │ assignment_marks    │
+                     └─────────────────────┘
+
+                  ┌──────────┐
+                  │ reports  │  ← audit log of generated PDFs
+                  └──────────┘
 ```
 
-16 tables: `organizations, roles, users, managers, teachers, students,
-courses, classes, enrollments, attendance, assignments,
-assignment_submissions, assignment_marks, quizzes, quiz_marks, reports`.
+---
+
+## Cross-cutting design notes
+
+These are the conventions that show up everywhere, worth knowing once:
+
+- **`TimestampMixin`** — every meaningful table has `created_at` and `updated_at`. Free audit timeline.
+- **`TenantMixin`** — adds `organization_id` + index + cascade. Almost every non-`organizations` table inherits it.
+- **Cardinality is enforced at the DB, not just code:**
+  - **1-to-1** via a `UNIQUE` foreign key (e.g. `managers.user_id UNIQUE`, `assignment_marks.submission_id UNIQUE`).
+  - **M-to-N** via a junction table with a composite `UNIQUE` (e.g. `enrollments(student_id, class_id)`).
+  - **Natural-key uniqueness** within a tenant via composite `UNIQUE (organization_id, …)`.
+- **`ON DELETE` rules tell a story:**
+  - `CASCADE` — owning-relationship: deleting the parent should wipe its children (organization → users; class → enrollments).
+  - `RESTRICT` — protect history: can't delete a teacher who's still teaching, can't delete a role still in use.
+  - `SET NULL` — soft attribution: keep the record but null the attribution (who graded this submission, who marked this attendance).
+- **Roles as a table, not just an enum** — keeps role metadata in one place (textbook 3NF). The enum exists for code-side type safety; the table is the source of truth.
+- **Students aren't required to be users** — `students.user_id` is optional. Lets you import student records without logins (e.g. legacy demo data).
+- **No PostgreSQL "schemas" beyond `public`** — multi-tenancy is row-level (`organization_id` filter), not schema-per-tenant. Simpler ops, one set of migrations, isolation enforced in the service layer (`backend/app/core/deps.py` — the `TenantContext`).
 
 ---
 
-## 2. Relationship catalogue
+## What to explore first in DBeaver
 
-| # | Relationship | Cardinality | Where enforced | Why it exists |
-|---|--------------|-------------|----------------|---------------|
-| 1 | organizations → users | 1 : N | `users.organization_id` FK (nullable for Head Admin) | Tenant ownership of accounts |
-| 2 | roles → users | 1 : N | `users.role_id` FK (ON DELETE RESTRICT) | Normalised role lookup (3NF) |
-| 3 | users ↔ managers | 1 : 1 | `managers.user_id` **UNIQUE** FK | Profile extension without nullable columns on `users` |
-| 4 | users ↔ teachers | 1 : 1 | `teachers.user_id` **UNIQUE** FK | Same — HR/academic attributes only teachers have |
-| 5 | organizations → students | 1 : N | `students.organization_id` FK | Tenant-owned learner records |
-| 6 | organizations → courses | 1 : N | `courses.organization_id` FK | Tenant catalogue |
-| 7 | courses → classes | 1 : N | `classes.course_id` FK | A course runs many times (terms/sections) |
-| 8 | teachers → classes | 1 : N (M:1 from class) | `classes.teacher_id` FK (RESTRICT) | The instructor of an offering |
-| 9 | students ↔ classes | **M : N** | `enrollments` junction, `UQ(student_id,class_id)` | Students take many classes; classes have many students |
-| 10 | classes → attendance | 1 : N | `attendance.class_id` FK, `UQ(class,student,date)` | One attendance fact per session |
-| 11 | classes → assignments | 1 : N | `assignments.class_id` FK | Coursework belongs to an offering |
-| 12 | assignments → assignment_submissions | 1 : N | `UQ(assignment,student)` | One submission per student per assignment |
-| 13 | assignment_submissions ↔ assignment_marks | **1 : 1** | `assignment_marks.submission_id` **UNIQUE** FK | Separates *submitting* from *grading* |
-| 14 | classes → quizzes | 1 : N | `quizzes.class_id` FK | Quizzes belong to an offering |
-| 15 | quizzes → quiz_marks | 1 : N | `UQ(quiz,student)` | One mark per student per quiz |
-| 16 | organizations → reports | 1 : N | `reports.organization_id` FK | Per-tenant audit of generated PDFs |
+Once you're connected on port **5433**, expand `shizuka_crm → Schemas → public → Tables`. Good first queries to run:
 
-**One-to-One** examples: #3, #4, #13.
-**One-to-Many / Many-to-One** examples: #1, #2, #5–8, #10–12, #14, #15.
-**Many-to-Many (junction/association object)**: #9 (`enrollments` even carries
-its own attributes — `status`, `final_grade` — making it an *association
-object*, not a bare link table).
+```sql
+-- 1. See the four roles
+SELECT * FROM roles;
 
----
+-- 2. See all tenants
+SELECT id, slug, name, plan, is_active FROM organizations;
 
-## 3. Normalization (to 3NF)
+-- 3. Pakistani-name seed: CUI Lahore teachers and their departments
+SELECT u.full_name, t.employee_code, d.code AS dept
+FROM teachers t
+JOIN users u       ON u.id = t.user_id
+JOIN departments d ON d.id = t.department_id
+WHERE t.organization_id = (SELECT id FROM organizations WHERE slug='cuilahore');
 
-* **1NF** — every column is atomic; no repeating groups. Marking a class is
-  modelled as N rows in `attendance`, never a comma-list on `classes`.
-* **2NF** — no partial dependency on a composite key. `enrollments` uses a
-  surrogate `id`; its descriptive attributes (`status`, `final_grade`) depend
-  on the *whole* student+class pair, not part of it.
-* **3NF** — no transitive dependencies:
-  * Role description lives in `roles`, **not** repeated on every `users` row.
-  * Course catalogue data (`title`, `credit_hours`) lives in `courses`; a
-    `classes` row only references `course_id`. The classic course-vs-offering
-    split removes the term/teacher/room repeating group that would otherwise
-    sit on a course.
-  * Grading metadata (`graded_by`, `graded_at`, `feedback`) is in
-    `assignment_marks`, not denormalised onto `assignment_submissions`.
-
-A deliberate, documented exception: `reports.params` is `JSONB`. Report filter
-sets are sparse and evolving; a normalised "report_param" table would add
-joins for zero integrity benefit. This is a pragmatic, indexed semi-structured
-column, not accidental denormalization.
-
----
-
-## 4. Multi-tenant isolation (the core guarantee)
-
-**Strategy:** shared database, shared schema, `organization_id` discriminator
-on every tenant-scoped table.
-
-Three independent layers must all agree before any row is returned:
-
-1. **Schema** — `TenantMixin` puts an indexed `organization_id` FK
-   (`ON DELETE CASCADE`) on all 14 tenant tables. No tenant row can exist
-   without an owning organization; deleting an org atomically erases its data.
-2. **Repository** (`repositories/base.py`) — *every* query is built by
-   `_scoped()`, which injects `WHERE organization_id = :ctx`. Services never
-   hand-write the predicate, so a single omission cannot leak data.
-3. **API dependency** (`core/deps.py::get_tenant`) — for Manager/Teacher the
-   org id is taken **from the JWT/user row** and a `?organization_id=` query
-   param is *ignored*. A forged id cannot widen scope. Only the Head Admin may
-   explicitly target an org.
-
-Result: a Manager at "Northfield" issuing `GET /students` can only ever read
-Northfield students — enforced architecturally, not by discipline.
-
-`users.email` carries a **platform-wide** unique constraint (login happens
-before a tenant is known); business identifiers like `students.enrollment_number`
-and `teachers.employee_code` are unique **per-organization** via composite
-constraints, so two universities may reuse the same codes safely.
-
----
-
-## 5. Indexing strategy
-
-| Index | Reason |
-|-------|--------|
-| `organization_id` on every tenant table | Every tenant-safe query filters on it — highest-selectivity hot path |
-| `users.email` (unique) | Login lookup |
-| `roles.name` (unique) | Role resolution on every auth |
-| FK columns (`course_id`, `teacher_id`, `class_id`, `student_id`, …) | Join performance + FK constraint checks |
-| `attendance(class_id, student_id, session_date)` UNIQUE | Natural key; also serves the "today's sheet" query |
-| `enrollments(student_id, class_id)` UNIQUE | Prevents double-enrollment; powers roster lookups |
-| `students.enrollment_number`, `courses.code` | Searchable business keys |
-
----
-
-## 6. Constraints, transactions & integrity
-
-* **PK**: surrogate `BIGINT/INT` identity on every table (stable, join-friendly).
-* **FK actions**: `CASCADE` for ownership (org → children, submission → mark),
-  `RESTRICT` to protect academic history (can't delete a teacher who owns
-  classes, or a role in use), `SET NULL` for soft references
-  (`marked_by_teacher_id`, `generated_by_user_id`).
-* **UNIQUE**: all natural/business keys (see tables above).
-* **NOT NULL** + server-side `created_at/updated_at` defaults.
-* **Transactions**: multi-statement writes are atomic — e.g.
-  `organization_service.create` (organization + manager user + manager
-  profile), `people_service.create_teacher` (user + teacher), and
-  `attendance_service.mark_session` (whole-class upsert) each commit or roll
-  back as a unit (`db.rollback()` on exception).
-
----
-
-## 7. Migrations
-
-`alembic/versions/0001_initial.py` is a baseline that builds the full schema
-from the model metadata, so the first migration is guaranteed to match the
-models. From there, normal autogenerate diffs apply:
-
-```bash
-alembic revision --autogenerate -m "describe change"
-alembic upgrade head
+-- 4. The attendance grid for one class
+SELECT s.enrollment_number, s.full_name, a.session_date, a.status
+FROM attendance a
+JOIN students s ON s.id = a.student_id
+WHERE a.class_id = 1
+ORDER BY s.enrollment_number, a.session_date;
 ```
+
+DBeaver also has a built-in ER diagram: right-click any table or the `public` schema → **View Diagram** — it auto-draws the boxes-and-arrows version of the map above.
