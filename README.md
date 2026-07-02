@@ -1,4 +1,4 @@
-# Shizuka — SaaS University CRM
+# UniForce — SaaS University CRM
 
 A production-style, **multi-tenant** University CRM built database-first.
 Multiple universities run on one platform with **completely isolated data**,
